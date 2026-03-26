@@ -1,0 +1,26 @@
+<svg viewBox="0 0 400 250" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="400" height="250" fill="#fdf2f8"/>
+  
+  <!-- Grid layout - Visual portfolio -->
+  <!-- Row 1 -->
+  <rect x="15" y="15" width="85" height="85" fill="#ec4899" opacity="0.3" stroke="#ec4899" stroke-width="1"/>
+  <rect x="110" y="15" width="85" height="85" fill="#ec4899" opacity="0.4" stroke="#ec4899" stroke-width="1"/>
+  <rect x="205" y="15" width="85" height="85" fill="#ec4899" opacity="0.35" stroke="#ec4899" stroke-width="1"/>
+  <rect x="300" y="15" width="85" height="85" fill="#ec4899" opacity="0.25" stroke="#ec4899" stroke-width="1"/>
+  
+  <!-- Row 2 -->
+  <rect x="15" y="110" width="85" height="85" fill="#ec4899" opacity="0.2" stroke="#ec4899" stroke-width="1"/>
+  <rect x="110" y="110" width="85" height="85" fill="#ec4899" opacity="0.45" stroke="#ec4899" stroke-width="1"/>
+  <rect x="205" y="110" width="85" height="85" fill="#ec4899" opacity="0.3" stroke="#ec4899" stroke-width="1"/>
+  <rect x="300" y="110" width="85" height="85" fill="#ec4899" opacity="0.5" stroke="#ec4899" stroke-width="1"/>
+  
+  <!-- Gallery icons in cells -->
+  <text x="55" y="60" font-family="Arial" font-size="20" text-anchor="middle" fill="#be185d" opacity="0.6">📷</text>
+  <text x="150" y="60" font-family="Arial" font-size="20" text-anchor="middle" fill="#be185d" opacity="0.7">🎨</text>
+  <text x="245" y="60" font-family="Arial" font-size="20" text-anchor="middle" fill="#be185d" opacity="0.6">🖼️</text>
+  <text x="340" y="60" font-family="Arial" font-size="20" text-anchor="middle" fill="#be185d" opacity="0.5">✨</text>
+  
+  <!-- Text label -->
+  <text x="20" y="245" font-family="Arial" font-size="10" fill="#999">Visual Designer</text>
+</svg>

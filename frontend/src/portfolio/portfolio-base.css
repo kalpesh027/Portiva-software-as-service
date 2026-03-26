@@ -1,0 +1,31 @@
+/* Minimal CSS reset for the portfolio shell only.
+   Intentionally sparse — template CSS does the real styling. */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+img, video {
+  max-width: 100%;
+  display: block;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+#portfolio-root {
+  min-height: 100vh;
+}

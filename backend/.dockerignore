@@ -1,0 +1,16 @@
+# Maven build output — never send to Docker
+target/
+
+# IDE / OS noise
+.idea/
+*.iml
+.DS_Store
+*.class
+
+# Local config overrides
+*.env
+.env*
+
+# Git
+.git/
+.gitignore

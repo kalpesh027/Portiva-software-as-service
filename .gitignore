@@ -1,0 +1,46 @@
+# Secrets - never commit
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+venv_win/
+ai-engine/venv/
+ai-engine/venv_win/
+
+# Java / Maven
+backend/target/
+*.class
+
+# Node / frontend
+node_modules/
+frontend/node_modules/
+developer-portfolio-2/**/node_modules/
+dist/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE / OS
+.DS_Store
+Thumbs.db
+.idea/
+
+# Docker build caches (optional)
+.docker/
