@@ -181,10 +181,12 @@ PORTIVA supports subscription-based access using:
 
 # 📷 Screenshots
 
-(Add these images)
 Portfolio Builder
+
 <img width="1856" height="906" alt="Screenshot 2026-03-24 213644" src="https://github.com/user-attachments/assets/83977925-4825-4cd9-89b9-3c06ba2717b0" />
+
 Dashboard
+
 <img width="1878" height="905" alt="Screenshot 2026-03-24 215031" src="https://github.com/user-attachments/assets/9098a996-7c60-4122-881d-d9b21319e484" />
 
 ---
