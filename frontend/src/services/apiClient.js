@@ -1,56 +1,64 @@
 /**
  * API Client — base HTTP client for all backend requests.
  *
- * Wraps the native Fetch API with:
+ * Wraps Axios with:
  *  - Base URL injection from app config
  *  - Automatic JSON serialisation / deserialisation
  *  - Auth token attachment (reads from localStorage)
  *  - Consistent error handling — always throws an Error with `message`
  *
  * Usage:
- *   import { apiClient } from '@/services/apiClient';
+ *   import apiClient from '@/services/apiClient';
  *   const data = await apiClient.get('/users/me');
  *   const result = await apiClient.post('/auth/login', { email, password });
  */
+import axios from 'axios';
 import appConfig from '../config/app.config';
 
 const BASE_URL = appConfig.apiBaseUrl;
 
-function getAuthHeaders() {
-  const token = localStorage.getItem('portify-token');
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
-async function request(method, path, body) {
-  const headers = {
+const http = axios.create({
+  baseURL: BASE_URL,
+  headers: {
     'Content-Type': 'application/json',
-    ...getAuthHeaders(),
-  };
+  },
+});
 
-  const response = await fetch(`${BASE_URL}${path}`, {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-
-  let data;
-  try {
-    data = await response.json();
-  } catch {
-    data = {};
+http.interceptors.request.use((config) => {
+  const token = localStorage.getItem('portify-token');
+  if (token) {
+    config.headers = {
+      ...config.headers,
+      Authorization: `Bearer ${token}`,
+    };
   }
+  return config;
+});
 
-  if (!response.ok) {
-    throw new Error(data?.message || `Request failed: ${response.status}`);
+http.interceptors.response.use(
+  (response) => response.data,
+  (err) => {
+    const message = err?.response?.data?.message || err?.message || 'Request failed';
+    const error = new Error(message);
+    error.response = {
+      status: err?.response?.status || null,
+      data: err?.response?.data || null,
+    };
+
+    if (error.response.status === 401) {
+      localStorage.removeItem('portify-token');
+    }
+
+    return Promise.reject(error);
   }
+);
 
-  return data;
-}
-
-export const apiClient = {
-  get:    (path)              => request('GET',    path),
-  post:   (path, body)        => request('POST',   path, body),
-  put:    (path, body)        => request('PUT',    path, body),
-  patch:  (path, body)        => request('PATCH',  path, body),
-  delete: (path)              => request('DELETE', path),
+export default {
+  get:    (path, config)       => http.get(path, config),
+  post:   (path, body, config) => http.post(path, body, config),
+  put:    (path, body, config) => http.put(path, body, config),
+  patch:  (path, body, config) => http.patch(path, body, config),
+  delete: (path, config)       => http.delete(path, config),
 };
+
+export const rawHttpClient = http;

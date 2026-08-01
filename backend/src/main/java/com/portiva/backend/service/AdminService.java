@@ -13,6 +13,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,6 +31,7 @@ public class AdminService {
     private final SubscriptionRepository subscriptionRepository;
     private final TemplateRepository templateRepository;
     private final PaymentOrderRepository paymentOrderRepository;
+    private final PasswordEncoder passwordEncoder;
 
     /**
      * Pageable list of all users — supports search by name or email.
@@ -123,6 +125,38 @@ public class AdminService {
     }
 
     /**
+     * Pageable payment orders list for admin panel.
+     * Supports optional status/plan/search filters.
+     */
+    @Transactional(readOnly = true)
+    public Page<PaymentRow> getPayments(int page, int size, String status, String plan, String search) {
+        // Native SQL query already applies ORDER BY created_at DESC.
+        Pageable pageable = PageRequest.of(page, size);
+
+        String normalizedStatus = normalizeFilterValue(status);
+        String normalizedPlan = normalizeFilterValue(plan);
+        String normalizedSearch = normalizeSearchValue(search);
+
+        return paymentOrderRepository
+                .searchForAdmin(normalizedStatus, normalizedPlan, normalizedSearch, pageable)
+                .map(po -> PaymentRow.builder()
+                        .id(po.getId().toString())
+                        .userId(po.getUser().getId().toString())
+                        .userEmail(po.getUser().getEmail())
+                        .plan(po.getPlan())
+                        .billingPeriod(po.getBillingPeriod())
+                        .amountPaise(po.getAmount())
+                        .amountInr(po.getAmount() != null ? po.getAmount() / 100.0 : 0.0)
+                        .currency(po.getCurrency())
+                        .status(po.getStatus())
+                        .razorpayOrderId(po.getRazorpayOrderId())
+                        .razorpayPaymentId(po.getRazorpayPaymentId())
+                        .webhookProcessed(po.getWebhookProcessed())
+                        .createdAt(po.getCreatedAt() != null ? po.getCreatedAt().toString() : null)
+                        .build());
+    }
+
+    /**
      * Platform statistics for admin dashboard.
      *
      * Plan breakdown uses JPQL @Query — O(1) DB aggregation, not O(n) in-memory stream.
@@ -202,5 +236,36 @@ public class AdminService {
         template.setIsActive(false);
         templateRepository.save(template);
         log.info("Template deactivated: templateId={}", templateId);
+    }
+
+    /**
+     * Admin password reset — allows admin to reset any user's password.
+     * Admin cannot reset their own password via this endpoint for security.
+     */
+    @Transactional
+    public void resetUserPassword(UUID adminId, UUID targetUserId, String newPassword) {
+        if (adminId.equals(targetUserId)) {
+            throw new ForbiddenException("Cannot reset your own password via admin endpoint");
+        }
+
+        User user = userRepository.findById(targetUserId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+
+        String hashedPassword = passwordEncoder.encode(newPassword);
+        user.setPasswordHash(hashedPassword);
+        userRepository.save(user);
+        
+        log.info("Admin reset user password: adminId={} targetUserId={} email={}", 
+                adminId, targetUserId, user.getEmail());
+    }
+
+    private String normalizeFilterValue(String value) {
+        if (value == null || value.isBlank()) return null;
+        return value.trim().toLowerCase();
+    }
+
+    private String normalizeSearchValue(String value) {
+        if (value == null || value.isBlank()) return null;
+        return value.trim();
     }
 }

@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import AuthService from "../services/authService";
+import { useDispatch, useSelector } from "react-redux";
 import { CiCloudRainbow } from "react-icons/ci";
+import { clearAuthError, registerUser } from "../features/auth/authSlice";
 import { useStoredTheme } from "../hooks/useStoredTheme";
 import { cn } from "../utils/cn";
 import { I } from "../utils/icons";
@@ -18,6 +19,8 @@ const PERKS = [
 export default function Register() {
   const dark = useStoredTheme();
   const nav = useNavigate();
+  const dispatch = useDispatch();
+  const { loading, error } = useSelector((state) => state.auth);
 
 
   const [name,     setName]     = useState("");
@@ -25,19 +28,18 @@ export default function Register() {
   const [password, setPassword] = useState("");
   const [showPw,   setShowPw]   = useState(false);
   const [agree,    setAgree]    = useState(false);
-  const [loading,  setLoading]  = useState(false);
+  const errorMessage = typeof error === "string" ? error : error?.message;
 
   const onSubmit = async (e) => {
     e.preventDefault();
     if (!agree) return;
-    setLoading(true);
+    dispatch(clearAuthError());
     try {
-      await AuthService.register({ name, email, password });
-      nav("/verify-otp", { state: { email } });
-    } catch (err) {
-      alert(err.message || "Failed to register. Maybe email already exists?");
-      setLoading(false);
-    }
+      await dispatch(registerUser({ name, email, password })).unwrap();
+      sessionStorage.setItem("portiva-auth-origin", "register");
+      sessionStorage.setItem("portiva-auth-email", email.trim().toLowerCase());
+      nav("/verify-otp", { state: { email, fromRegister: true } });
+    } catch (_) {}
   };
 
   return (
@@ -114,6 +116,20 @@ export default function Register() {
             </p>
 
             <form onSubmit={onSubmit} className="space-y-4">
+
+              {errorMessage && (
+                <div
+                  role="alert"
+                  className={cn(
+                    "rounded-xl border px-3 py-2 text-sm",
+                    dark
+                      ? "border-rose-500/40 bg-rose-500/10 text-rose-200"
+                      : "border-rose-300 bg-rose-50 text-rose-700"
+                  )}
+                >
+                  {errorMessage}
+                </div>
+              )}
 
               {/* Full name */}
               <div>

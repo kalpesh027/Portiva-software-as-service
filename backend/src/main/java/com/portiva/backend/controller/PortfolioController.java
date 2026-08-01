@@ -67,9 +67,11 @@ public class PortfolioController {
     public ResponseEntity<PortfolioResponse> changeTemplate(
             @AuthenticationPrincipal UUID userId,
             @PathVariable UUID id,
-            @Valid @RequestBody ChangeTemplateRequest req
+            @RequestBody Map<String, Object> body
     ) {
-        return ResponseEntity.ok(portfolioService.changeTemplate(userId, id, req.getTemplateName()));
+        Object templateNameObj = body.get("templateName");
+        String templateName = templateNameObj != null ? String.valueOf(templateNameObj) : null;
+        return ResponseEntity.ok(portfolioService.changeTemplate(userId, id, templateName));
     }
 
     /** GET /portfolio/{id}/analytics */

@@ -13,7 +13,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
-import { apiClient } from '../services/apiClient';
+import apiClient from '../services/apiClient';
 import { getTemplatePreviewImage } from '../config/templatePreviewImages';
 import { getTemplateDisplayName } from '../config/templateDisplayNames';
 

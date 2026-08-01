@@ -1,7 +1,7 @@
 // Razorpay checkout component.
 // Script is loaded dynamically — NOT in index.html.
 import { useState } from 'react'
-import { apiClient } from '../services/apiClient'
+import apiClient from '../services/apiClient';
 import { useSelector } from 'react-redux'
 
 const RAZORPAY_SCRIPT = 'https://checkout.razorpay.com/v1/checkout.js'

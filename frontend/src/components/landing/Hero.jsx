@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import InsightsRoundedIcon from "@mui/icons-material/InsightsRounded";
-import AutoFixHighRoundedIcon from "@mui/icons-material/AutoFixHighRounded";
-import TipsAndUpdatesRoundedIcon from "@mui/icons-material/TipsAndUpdatesRounded";
+import { BiLineChart } from "react-icons/bi";
+import { BiSolidMagicWand } from "react-icons/bi";
+import { MdLightbulb } from "react-icons/md";
 import { cn, T, Icon, I, FadeUp, Tilt } from "./landingUtils";
 
 export default function Hero({ dark }) {
@@ -59,7 +59,7 @@ export default function Hero({ dark }) {
                 t.pillViolet,
               )}
             >
-              <InsightsRoundedIcon style={{ fontSize: 18 }} /> AI-Powered
+              <BiLineChart style={{ fontSize: 18 }} /> AI-Powered
               Portfolio Builder
             </div>
           </FadeUp>
@@ -100,7 +100,7 @@ export default function Hero({ dark }) {
                 to="/create"
                 className="inline-flex items-center gap-2 px-4 py-2 font-bold text-white rounded-xl bg-gradient-to-r from-violet-600 to-violet-400 shadow-lg shadow-violet-500/20 hover:shadow-violet-500/40 hover:-translate-y-0.5 transition-all text-sm"
               >
-                <AutoFixHighRoundedIcon style={{ fontSize: 15 }} /> Create
+                <BiSolidMagicWand style={{ fontSize: 15 }} /> Create
                 Portfolio
               </Link>
               <button
@@ -272,7 +272,7 @@ export default function Hero({ dark }) {
                   >
                     <div className="flex items-center gap-2 mb-2">
                       <div className="w-5 h-5 rounded-full bg-gradient-to-br from-violet-500 to-violet-400 flex items-center justify-center">
-                        <TipsAndUpdatesRoundedIcon
+                        <MdLightbulb
                           style={{ fontSize: 12, color: "white" }}
                         />
                       </div>

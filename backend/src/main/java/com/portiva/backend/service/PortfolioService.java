@@ -271,30 +271,53 @@ public class PortfolioService {
      */
     @Transactional
     public PortfolioResponse update(UUID userId, UUID portfolioId, Map<String, Object> updates) {
-        Portfolio portfolio = findOwnedPortfolio(userId, portfolioId);
+        try {
+            log.info("update start: userId={} portfolioId={} updateKeys={}", userId, portfolioId, 
+                    updates != null ? updates.keySet() : "null");
+            
+            Portfolio portfolio = findOwnedPortfolio(userId, portfolioId);
+            log.debug("Portfolio found for update: id={}", portfolio.getId());
 
-        // Update allowed fields if present in the updates map
-        if (updates.containsKey("templateName")) {
-            portfolio.setTemplateName(updates.get("templateName").toString());
-        }
-        if (updates.containsKey("customDomain")) {
-            portfolio.setCustomDomain(updates.get("customDomain").toString());
-        }
-        if (updates.containsKey("formData")) {
-            try {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> formData = (Map<String, Object>) updates.get("formData");
-                portfolio.setRawFormData(objectMapper.writeValueAsString(formData));
-            } catch (Exception e) {
-                log.error("Failed to update formData: portfolioId={}", portfolioId);
+            // Update allowed fields if present in the updates map
+            if (updates.containsKey("templateName")) {
+                String newTemplate = String.valueOf(updates.get("templateName"));
+                portfolio.setTemplateName(newTemplate);
+                log.debug("Updated templateName: {}", newTemplate);
             }
+            if (updates.containsKey("customDomain")) {
+                String domain = String.valueOf(updates.get("customDomain"));
+                portfolio.setCustomDomain(domain);
+                log.debug("Updated customDomain: {}", domain);
+            }
+            if (updates.containsKey("formData")) {
+                Object formDataRaw = updates.get("formData");
+                log.debug("Processing formData: type={}", formDataRaw != null ? formDataRaw.getClass().getSimpleName() : "null");
+                
+                if (!(formDataRaw instanceof Map<?, ?> rawMap)) {
+                    log.error("formData is not a Map, got: {}", formDataRaw != null ? formDataRaw.getClass().getSimpleName() : "null");
+                    throw new IllegalArgumentException("formData must be a JSON object");
+                }
+                @SuppressWarnings("unchecked")
+                Map<String, Object> formData = (Map<String, Object>) rawMap;
+                String jsonStr = objectMapper.writeValueAsString(formData);
+                portfolio.setRawFormData(jsonStr);
+                log.debug("Updated formData: {} bytes", jsonStr.length());
+            }
+
+            portfolioRepository.save(portfolio);
+            log.info("Portfolio saved: id={}", portfolioId);
+            
+            evictPortfolioCache(portfolio.getSlug());
+            log.info("Portfolio updated: portfolioId={} userId={}", portfolioId, userId);
+            return buildPortfolioResponse(portfolio);
+        } catch (IllegalArgumentException e) {
+            log.error("IllegalArgumentException in update: {}", e.getMessage());
+            throw e;
+        } catch (Exception e) {
+            log.error("Portfolio update failed: portfolioId={} userId={} error={} type={}",
+                    portfolioId, userId, e.getMessage(), e.getClass().getSimpleName(), e);
+            throw new IllegalArgumentException("Failed to save content. Please try again.");
         }
-
-        portfolioRepository.save(portfolio);
-        evictPortfolioCache(portfolio.getSlug());
-
-        log.info("Portfolio updated: portfolioId={} userId={}", portfolioId, userId);
-        return buildPortfolioResponse(portfolio);
     }
 
     /**
@@ -303,47 +326,88 @@ public class PortfolioService {
      */
     @Transactional
     public PortfolioResponse changeTemplate(UUID userId, UUID portfolioId, String templateName) {
-        Portfolio portfolio = findOwnedPortfolio(userId, portfolioId);
-
-        String normalizedTemplate = templateName != null ? templateName.trim() : "";
-        if (normalizedTemplate.isBlank()) {
-            throw new IllegalArgumentException("Template name is required");
-        }
-
-        Template template = templateRepository.findById(normalizedTemplate)
-                .orElseThrow(() -> new IllegalArgumentException("Invalid template: " + normalizedTemplate));
-
-        if (Boolean.FALSE.equals(template.getIsActive())) {
-            throw new IllegalArgumentException("Template is inactive: " + normalizedTemplate);
-        }
-
-        // Keep current template active while AI regenerates content for the new one.
-        // Save chosen template immediately so invalid legacy template values do not break update.
-        // Public rendering still waits for aiStatus=done.
-        portfolio.setTemplateName(normalizedTemplate);
-        portfolio.setAiStatus("pending");
-        portfolio.setStatus("generating");
-        portfolioRepository.save(portfolio);
-
-        // Parse formData for AI engine
-        Map<String, Object> formData = parseJson(portfolio.getRawFormData());
-
-        // Fire-and-forget AI template switch.
-        // Important: async dispatch failures (e.g. task rejected) must NOT rollback template save.
+        log.info("=== changeTemplate START ===");
+        log.info("userId={} portfolioId={} templateName=[{}]", userId, portfolioId, templateName);
+        
         try {
-            aiService.switchTemplate(userId.toString(), normalizedTemplate, formData);
-        } catch (Exception e) {
-            log.warn("Template switch AI dispatch failed but template saved: portfolioId={} template={} error={}",
-                    portfolioId, normalizedTemplate, e.getMessage());
-            portfolio.setAiStatus("done");
-            portfolio.setStatus("published");
+            // Step 1: Find portfolio
+            log.debug("Step 1: Finding portfolio owned by user");
+            Portfolio portfolio = findOwnedPortfolio(userId, portfolioId);
+            log.info("✓ Portfolio found: id={} currentTemplate={}", portfolio.getId(), portfolio.getTemplateName());
+
+            // Step 2: Normalize template name
+            log.debug("Step 2: Normalizing template name");
+            String normalizedTemplate = templateName != null ? templateName.trim() : "";
+            log.info("normalizedTemplate after trim: [{}]", normalizedTemplate);
+            
+            if (normalizedTemplate.isBlank()) {
+                log.error("✗ ERROR: Template name is blank");
+                throw new IllegalArgumentException("Template name is required");
+            }
+
+            // Step 3: Validate template exists
+            log.debug("Step 3: Validating template exists: {}", normalizedTemplate);
+            Template template = templateRepository.findById(normalizedTemplate)
+                    .orElseThrow(() -> {
+                        log.error("✗ ERROR: Template not found in DB: {}", normalizedTemplate);
+                        return new IllegalArgumentException("Invalid template: " + normalizedTemplate);
+                    });
+            log.info("✓ Template found in DB: id={} active={}", template.getId(), template.getIsActive());
+
+            // Step 4: Check if template is active
+            log.debug("Step 4: Checking if template is active");
+            if (Boolean.FALSE.equals(template.getIsActive())) {
+                log.error("✗ ERROR: Template is inactive: {}", normalizedTemplate);
+                throw new IllegalArgumentException("Template is inactive: " + normalizedTemplate);
+            }
+            log.info("✓ Template is active");
+
+            // Step 5: Update portfolio in DB
+            log.debug("Step 5: Updating portfolio in DB");
+            portfolio.setTemplateName(normalizedTemplate);
+            portfolio.setAiStatus("pending");
+            portfolio.setStatus("generating");
             portfolioRepository.save(portfolio);
+            log.info("✓ Portfolio saved to DB with new template");
+
+            // Step 6: Get form data
+            log.debug("Step 6: Parsing form data");
+            Map<String, Object> formData = parseJson(portfolio.getRawFormData());
+            log.info("✓ FormData has {} keys", formData.keySet().size());
+
+            // Step 7: Dispatch to AI
+            log.debug("Step 7: Dispatching to AI service");
+            try {
+                log.info("Calling aiService.switchTemplate");
+                aiService.switchTemplate(userId.toString(), normalizedTemplate, formData);
+                log.info("✓ AI dispatch successful");
+            } catch (Exception aiError) {
+                log.warn("AI dispatch error (RECOVERABLE): {} - Marking as published anyway", aiError.getMessage(), aiError);
+                portfolio.setAiStatus("done");
+                portfolio.setStatus("published");
+                portfolioRepository.save(portfolio);
+                log.info("✓ Fallback: Marked portfolio as published despite AI error");
+            }
+
+            // Step 8: Evict cache
+            log.debug("Step 8: Evicting cache");
+            evictPortfolioCache(portfolio.getSlug());
+            log.info("✓ Cache evicted");
+
+            // Step 9: Build response
+            log.debug("Step 9: Building response");
+            PortfolioResponse resp = buildPortfolioResponse(portfolio);
+            log.info("=== changeTemplate SUCCESS === ");
+            return resp;
+            
+        } catch (IllegalArgumentException e) {
+            log.error("=== changeTemplate FAILED (IllegalArgumentException) === message: {}", e.getMessage());
+            throw e;
+        } catch (Exception e) {
+            log.error("=== changeTemplate FAILED (Unexpected) === type: {} message: {}", 
+                    e.getClass().getSimpleName(), e.getMessage(), e);
+            throw new IllegalArgumentException("Template switch failed. Details: " + e.getMessage());
         }
-
-        evictPortfolioCache(portfolio.getSlug());
-        log.info("Template change triggered: portfolioId={} template={}", portfolioId, normalizedTemplate);
-
-        return buildPortfolioResponse(portfolio);
     }
 
     /**
@@ -419,13 +483,21 @@ public class PortfolioService {
                 return;
             }
 
-            String newTemplate = templateObj.toString();
+                String newTemplate = templateObj.toString();
             String newPlaceholders = objectMapper.writeValueAsString(placeholderObj);
+
+                String resolvedTemplate = templateRepository.findById(newTemplate).isPresent()
+                    ? newTemplate
+                    : portfolio.getTemplateName();
+                if (!resolvedTemplate.equals(newTemplate)) {
+                log.warn("AI returned unknown template '{}', keeping existing template '{}' for portfolioId={}",
+                    newTemplate, resolvedTemplate, portfolio.getId());
+                }
 
             // Version old placeholder_map before overwriting
             addToVersionHistory(portfolio, portfolio.getPlaceholderMap());
 
-            portfolio.setTemplateName(newTemplate);
+            portfolio.setTemplateName(resolvedTemplate);
             portfolio.setPlaceholderMap(newPlaceholders);
             portfolio.setAiStatus("done");
             portfolio.setStatus("published");
@@ -440,7 +512,7 @@ public class PortfolioService {
             user.setAiGenCount(user.getAiGenCount() + 1);
             userRepository.save(user);
 
-            log.info("AI result saved: userId={} template={}", user.getId(), newTemplate);
+            log.info("AI result saved: userId={} template={}", user.getId(), resolvedTemplate);
 
         } catch (Exception e) {
             log.error("Failed to save AI result: portfolioId={} error={}",
@@ -495,12 +567,17 @@ public class PortfolioService {
     }
 
     private void evictPortfolioCache(String slug) {
-        // CacheManager.evict() works even when called from non-proxy context (self-call).
-        // @CacheEvict on a private method would be silently ignored by Spring AOP.
-        Cache cache = cacheManager.getCache("portfolio");
-        if (cache != null) {
-            cache.evict(slug);
-            log.debug("Cache evicted: portfolio slug={}", slug);
+        try {
+            // CacheManager.evict() works even when called from non-proxy context (self-call).
+            // @CacheEvict on a private method would be silently ignored by Spring AOP.
+            Cache cache = cacheManager.getCache("portfolio");
+            if (cache != null) {
+                cache.evict(slug);
+                log.debug("Cache evicted: portfolio slug={}", slug);
+            }
+        } catch (Exception e) {
+            // Redis may not be running in dev mode - log and continue
+            log.warn("Cache eviction failed (Redis unavailable?): {}", e.getMessage());
         }
     }
 
@@ -511,7 +588,10 @@ public class PortfolioService {
         inner.put("slug", portfolio.getSlug());
         inner.put("templateName", portfolio.getTemplateName());
         inner.put("placeholderMap", parseJson(portfolio.getPlaceholderMap()));
+        inner.put("rawFormData", parseJson(portfolio.getRawFormData()));
         inner.put("status", portfolio.getStatus());
+        inner.put("aiStatus", portfolio.getAiStatus());
+        inner.put("currentStep", portfolio.getCurrentStep());
         inner.put("liveUrl", portfolio.getLiveUrl());
         inner.put("createdAt", portfolio.getCreatedAt() != null
                 ? portfolio.getCreatedAt().toString() : null);

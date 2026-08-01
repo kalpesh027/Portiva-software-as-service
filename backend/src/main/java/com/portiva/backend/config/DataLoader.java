@@ -203,7 +203,8 @@ public class DataLoader implements ApplicationRunner {
     }
 
     private void seedAdminUser() {
-        if (userRepository.findByEmailAndDeletedAtIsNull(adminEmail).isPresent()) {
+        // Email is unique in DB. If any row exists (even soft-deleted), skip seeding to avoid startup crash.
+        if (userRepository.existsByEmail(adminEmail)) {
             return;
         }
 

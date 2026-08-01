@@ -4,7 +4,7 @@
  * Called by Redux thunks or directly from components.
  * Keeps API contract details out of UI code.
  */
-import { apiClient } from './apiClient';
+import apiClient from './apiClient';
 
 const AuthService = {
   /**

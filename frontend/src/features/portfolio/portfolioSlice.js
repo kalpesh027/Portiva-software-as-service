@@ -1,4 +1,4 @@
-﻿import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
+﻿import { createSlice, createAsyncThunk, createSelector } from '@reduxjs/toolkit';
 import PortfolioService from '../../services/portfolioService';
 
 // â”€â”€â”€ Async Thunks â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -12,7 +12,7 @@ export const saveDraftThunk = createAsyncThunk(
   async ({ formData, currentStep }, { rejectWithValue }) => {
     try {
       const res = await PortfolioService.saveDraft(formData, currentStep);
-      return res.data;
+      return res;
     } catch (err) {
       return rejectWithValue(err?.response?.data?.message || 'Failed to save draft');
     }
@@ -28,7 +28,7 @@ export const loadDraftThunk = createAsyncThunk(
   async (_, { rejectWithValue }) => {
     try {
       const res = await PortfolioService.getMyPortfolio();
-      return res.data;
+      return res;
     } catch (err) {
       // 404 means no portfolio yet â€” not an error
       if (err?.response?.status === 404) return null;
@@ -47,7 +47,7 @@ export const checkSlugThunk = createAsyncThunk(
     if (!name || name.trim().length < 2) return { slug: '', available: null };
     try {
       const res = await PortfolioService.checkSlug(name);
-      return res.data;
+      return res;
     } catch (err) {
       return rejectWithValue('Slug check failed');
     }
@@ -99,6 +99,11 @@ const initialState = {
   isGenerating: false,
   isGenerated: false,
   generatedPortfolio: null,
+  templateSwitching: false,
+  templateSwitchJobId: null,
+  templateSwitchStatus: null,
+  templateSwitchTarget: null,
+  templateSwitchMessage: null,
 };
 
 export const portfolioSlice = createSlice({
@@ -165,6 +170,32 @@ export const portfolioSlice = createSlice({
       state.isGenerating = false;
       state.isGenerated = true;
       state.generatedPortfolio = action.payload;
+    },
+    switchInitiated: (state, action) => {
+      state.templateSwitching = true;
+      state.templateSwitchJobId = action.payload?.jobId || null;
+      state.templateSwitchStatus = 'initiated';
+      state.templateSwitchTarget = action.payload?.targetTemplate || null;
+      state.templateSwitchMessage = action.payload?.message || 'Switching template... AI is generating your portfolio';
+    },
+    switchPolling: (state, action) => {
+      state.templateSwitching = true;
+      state.templateSwitchStatus = 'polling';
+      state.templateSwitchMessage = action.payload?.message || 'Switching template... AI is generating your portfolio';
+    },
+    switchComplete: (state, action) => {
+      state.templateSwitching = false;
+      state.templateSwitchStatus = 'complete';
+      state.templateSwitchMessage = action.payload?.message || 'Template switched successfully';
+      state.templateSwitchJobId = null;
+      state.templateSwitchTarget = null;
+    },
+    switchFailed: (state, action) => {
+      state.templateSwitching = false;
+      state.templateSwitchStatus = 'failed';
+      state.templateSwitchMessage = action.payload?.message || 'Connection failed, please try again';
+      state.templateSwitchJobId = null;
+      state.templateSwitchTarget = null;
     },
     resetPortfolio: () => initialState,
   },
@@ -257,10 +288,27 @@ export const {
   updateContact,
   startPortfolioGeneration,
   completePortfolio,
+  switchInitiated,
+  switchPolling,
+  switchComplete,
+  switchFailed,
   resetPortfolio,
   addBlog,
   removeBlog,
 } = portfolioSlice.actions;
+
+const selectPortfolioState = (state) => state.portfolio;
+
+export const selectTemplateSwitchState = createSelector(
+  [selectPortfolioState],
+  (portfolioState) => ({
+    templateSwitching: portfolioState.templateSwitching,
+    templateSwitchJobId: portfolioState.templateSwitchJobId,
+    templateSwitchStatus: portfolioState.templateSwitchStatus,
+    templateSwitchTarget: portfolioState.templateSwitchTarget,
+    templateSwitchMessage: portfolioState.templateSwitchMessage,
+  })
+);
 
 export default portfolioSlice.reducer;
 

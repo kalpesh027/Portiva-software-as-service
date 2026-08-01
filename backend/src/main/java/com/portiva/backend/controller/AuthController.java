@@ -10,6 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -56,6 +57,66 @@ public class AuthController {
     @PostMapping("/logout")
     public ResponseEntity<MessageResponse> logout() {
         return ResponseEntity.ok(new MessageResponse("Logged out successfully"));
+    }
+
+    /**
+     * POST /auth/promote-admin — development-only endpoint.
+     * Requires devKey header for security. Use only in dev/testing.
+     * {email} → promotes user to admin role.
+     */
+    @PostMapping("/promote-admin")
+    public ResponseEntity<?> promoteToAdmin(
+            @RequestHeader(value = "X-Dev-Key", required = false) String devKey,
+            @RequestBody Map<String, String> payload
+    ) {
+        // Simple dev-only protection: accept requests with X-Dev-Key header
+        if (!"dev-unlock-2024".equals(devKey)) {
+            return ResponseEntity.status(403).body(new MessageResponse("Access denied"));
+        }
+        
+        String email = payload.get("email");
+        if (email == null || email.trim().isEmpty()) {
+            return ResponseEntity.badRequest().body(new MessageResponse("Email is required"));
+        }
+        
+        try {
+            userService.promoteToAdmin(email);
+            return ResponseEntity.ok(new MessageResponse("User promoted to admin: " + email));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(new MessageResponse(e.getMessage()));
+        }
+    }
+
+    /**
+     * POST /auth/setup-admin — development-only endpoint.
+     * CREATE admin user directly for testing (bypasses OTP/email verification).
+     * Requires devKey header.
+     * {email,password,name} → creates verified admin user, returns {token,user}
+     */
+    @PostMapping("/setup-admin")
+    public ResponseEntity<?> setupAdmin(
+            @RequestHeader(value = "X-Dev-Key", required = false) String devKey,
+            @RequestBody Map<String, String> payload
+    ) {
+        if (!"dev-unlock-2024".equals(devKey)) {
+            return ResponseEntity.status(403).body(new MessageResponse("Access denied"));
+        }
+        
+        String email = payload.get("email");
+        String password = payload.get("password");
+        String name = payload.get("name");
+        
+        if (email == null || password == null || name == null || 
+            email.trim().isEmpty() || password.trim().isEmpty() || name.trim().isEmpty()) {
+            return ResponseEntity.badRequest().body(new MessageResponse("email, password, and name are required"));
+        }
+        
+        try {
+            var response = userService.createAdminUser(email, password, name);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(new MessageResponse(e.getMessage()));
+        }
     }
 
     /** GET /auth/me — returns current user's profile */

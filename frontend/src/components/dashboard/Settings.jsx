@@ -1,17 +1,23 @@
-﻿import React, { useState } from 'react';
-import { useSelector } from 'react-redux';
+﻿import React, { useEffect, useState } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
+import { useNavigate } from 'react-router-dom';
 import { cn } from '../landing/landingUtils';
 import { CiUser, CiSettings, CiLock,  CiCreditCard1} from "react-icons/ci";
+import UserService from '../../services/userService';
+import { logout, setUser } from '../../features/auth/authSlice';
 
 const Settings = ({ dark = false }) => {
+    const dispatch = useDispatch();
+    const navigate = useNavigate();
     const { user } = useSelector((state) => state.auth);
     const [activeTab, setActiveTab] = useState('profile');
     const [isSaving, setIsSaving] = useState(false);
+    const [notice, setNotice] = useState({ type: '', message: '' });
 
     const [profileData, setProfileData] = useState({
         name: user?.name || '',
         email: user?.email || '',
-        bio: '',
+        title: user?.title || '',
         phone: '',
         location: '',
         website: ''
@@ -32,32 +38,97 @@ const Settings = ({ dark = false }) => {
         confirmPassword: ''
     });
 
+    useEffect(() => {
+        const fetchProfile = async () => {
+            try {
+                const profile = await UserService.getProfile();
+                setProfileData(prev => ({
+                    ...prev,
+                    name: profile?.name || '',
+                    email: profile?.email || prev.email || '',
+                    title: profile?.title || '',
+                    location: profile?.location || '',
+                    website: profile?.website || ''
+                }));
+                if (profile) {
+                    dispatch(setUser({ ...user, ...profile }));
+                }
+            } catch (err) {
+                setNotice({ type: 'error', message: err?.message || 'Failed to load profile data.' });
+            }
+        };
+
+        fetchProfile();
+    }, [dispatch]);
+
     const handleProfileChange = (field, value) => setProfileData(prev => ({ ...prev, [field]: value }));
     const handleAccountSettingChange = (field, value) => setAccountSettings(prev => ({ ...prev, [field]: value }));
 
-    const handleSaveProfile = () => {
+    const handleSaveProfile = async () => {
+        setNotice({ type: '', message: '' });
         setIsSaving(true);
-        setTimeout(() => { setIsSaving(false); alert('Profile updated successfully!'); }, 1500);
+        try {
+            const updated = await UserService.updateProfile({
+                name: profileData.name,
+                title: profileData.title,
+                location: profileData.location,
+                website: profileData.website,
+            });
+            dispatch(setUser({ ...user, ...updated }));
+            setNotice({ type: 'success', message: 'Profile updated successfully.' });
+        } catch (err) {
+            setNotice({ type: 'error', message: err?.message || 'Failed to update profile.' });
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     const handleSaveAccountSettings = () => {
         setIsSaving(true);
-        setTimeout(() => { setIsSaving(false); alert('Settings updated successfully!'); }, 1500);
-    };
-
-    const handleChangePassword = () => {
-        if (passwordData.newPassword !== passwordData.confirmPassword) { alert('Passwords do not match!'); return; }
-        setIsSaving(true);
         setTimeout(() => {
             setIsSaving(false);
-            setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
-            alert('Password changed successfully!');
-        }, 1500);
+            setNotice({ type: 'info', message: 'Account preference sync is coming soon. Profile and security settings are live.' });
+        }, 800);
     };
 
-    const handleDeleteAccount = () => {
+    const handleChangePassword = async () => {
+        if (passwordData.newPassword !== passwordData.confirmPassword) {
+            setNotice({ type: 'error', message: 'Passwords do not match.' });
+            return;
+        }
+        if (passwordData.newPassword.length < 8) {
+            setNotice({ type: 'error', message: 'New password must be at least 8 characters.' });
+            return;
+        }
+
+        setNotice({ type: '', message: '' });
+        setIsSaving(true);
+        try {
+            await UserService.updatePassword({
+                currentPassword: passwordData.currentPassword,
+                newPassword: passwordData.newPassword,
+            });
+            setIsSaving(false);
+            setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
+            setNotice({ type: 'success', message: 'Password updated successfully.' });
+        } catch (err) {
+            setIsSaving(false);
+            setNotice({ type: 'error', message: err?.message || 'Failed to update password.' });
+        }
+    };
+
+    const handleDeleteAccount = async () => {
         if (window.confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
-            alert('Account deletion initiated. You will receive a confirmation email.');
+            try {
+                setIsSaving(true);
+                await UserService.deleteAccount();
+                dispatch(logout());
+                navigate('/');
+            } catch (err) {
+                setNotice({ type: 'error', message: err?.message || 'Failed to delete account.' });
+            } finally {
+                setIsSaving(false);
+            }
         }
     };
 
@@ -99,7 +170,7 @@ const Settings = ({ dark = false }) => {
             </div>
             <div>
                 <label className={labelCls}>Bio</label>
-                <textarea value={profileData.bio} onChange={(e) => handleProfileChange('bio', e.target.value)} className={inputCls} rows="4" placeholder="Tell us about yourself..." />
+                <textarea value={profileData.title} onChange={(e) => handleProfileChange('title', e.target.value)} className={inputCls} rows="4" placeholder="Your professional title or tagline" />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
@@ -228,6 +299,19 @@ const Settings = ({ dark = false }) => {
 
     return (
         <div className="space-y-6">
+            {notice.message && (
+                <div
+                    className={cn(
+                        'rounded-xl border px-4 py-3 text-sm',
+                        notice.type === 'success' && (dark ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200' : 'border-emerald-300 bg-emerald-50 text-emerald-700'),
+                        notice.type === 'error' && (dark ? 'border-rose-500/40 bg-rose-500/10 text-rose-200' : 'border-rose-300 bg-rose-50 text-rose-700'),
+                        notice.type === 'info' && (dark ? 'border-sky-500/40 bg-sky-500/10 text-sky-200' : 'border-sky-300 bg-sky-50 text-sky-700')
+                    )}
+                >
+                    {notice.message}
+                </div>
+            )}
+
             {/* Header */}
             <div className={cn('p-6 rounded-2xl border', dark ? 'bg-[#0f1829] border-slate-700/60' : 'bg-gray-50/50 border-gray-200/60')}>
                 <h2 className={cn('text-2xl font-bold mb-2', t1)}>Settings</h2>

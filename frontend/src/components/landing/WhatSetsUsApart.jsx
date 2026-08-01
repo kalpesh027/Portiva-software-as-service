@@ -1,5 +1,5 @@
 import { cn, T, Icon, I, FadeUp, Tilt, GradText } from "./landingUtils";
-import AutoAwesomeRoundedIcon from '@mui/icons-material/AutoAwesomeRounded';
+import { MdAutoAwesome } from "react-icons/md";
 import { LuLayoutTemplate } from "react-icons/lu";
 import { GrDeploy } from "react-icons/gr";
 import { SiGoogleanalytics } from "react-icons/si";
@@ -75,7 +75,7 @@ export default function WhatSetsUsApart({ dark }) {
               >
                 <div className={cn("w-12 h-12 rounded-2xl flex items-center justify-center mb-5", c.ibg)}>
                   {c.icon === "autoawesome"
-                    ? <AutoAwesomeRoundedIcon style={{ fontSize: 22 }} />
+                    ? <MdAutoAwesome style={{ fontSize: 22 }} />
                     : c.icon === "lu-layout-template"
                       ? <LuLayoutTemplate size={22} />
                       : c.icon === "gr-deploy"

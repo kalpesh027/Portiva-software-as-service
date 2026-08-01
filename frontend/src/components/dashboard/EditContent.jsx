@@ -1,5 +1,9 @@
-﻿import React, { useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
+import { useForm, useFieldArray } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { cn } from '../landing/landingUtils';
 import PortfolioService from '../../services/portfolioService';
 import {
@@ -14,13 +18,13 @@ import {
 import { skillSuggestions, gradientColors } from '../../data/skillsData';
 
 //icons
-import Person2OutlinedIcon from '@mui/icons-material/Person2Outlined';
-import PsychologyOutlinedIcon from '@mui/icons-material/PsychologyOutlined';
-import AddHomeWorkOutlinedIcon from '@mui/icons-material/AddHomeWorkOutlined';
-import RocketLaunchOutlinedIcon from '@mui/icons-material/RocketLaunchOutlined';
-import SchoolOutlinedIcon from '@mui/icons-material/SchoolOutlined';
-import ChatOutlinedIcon from '@mui/icons-material/ChatOutlined';
-import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
+import { MdPerson } from 'react-icons/md';
+import { MdOutlinePsychology } from 'react-icons/md';
+import { BiBriefcase } from 'react-icons/bi';
+import { MdOutlineAirplanemodeActive } from 'react-icons/md';
+import { MdSchool } from 'react-icons/md';
+import { BiMessageRoundedDots } from 'react-icons/bi';
+import { MdEmail } from 'react-icons/md';
 
 // Calendar helpers
 const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -158,10 +162,204 @@ const AddPlaceholder = ({ label, subtitle, onClick, dark = false }) => (
   </div>
 );
 
+const editContentSchema = z.object({
+  name: z.string().optional(),
+  title: z.string().optional(),
+  about: z.string().optional(),
+  skills: z.array(z.string()).default([]),
+  experience: z.array(z.any()).default([]),
+  projects: z.array(z.any()).default([]),
+  education: z.array(z.any()).default([]),
+  testimonials: z.array(z.any()).default([]),
+  blogs: z.array(z.any()).default([]),
+  contact: z.object({
+    email: z.string().optional(),
+    linkedin: z.string().optional(),
+    github: z.string().optional(),
+    twitter: z.string().optional(),
+  }).default({ email: '', linkedin: '', github: '', twitter: '' }),
+});
+
+const parsePossibleJson = (value) => {
+  if (!value) return null;
+  if (typeof value === 'object') return value;
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+};
+
+const splitCsv = (value) => {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.map((v) => String(v).trim()).filter(Boolean);
+  return String(value)
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean);
+};
+
+const parseCountedList = (source, prefix, fields, countKey) => {
+  const count = Number.parseInt(source?.[countKey] ?? source?.[`${prefix}_count`] ?? 0, 10);
+  if (!Number.isFinite(count) || count <= 0) return [];
+
+  const items = [];
+  for (let i = 1; i <= count; i += 1) {
+    const item = {};
+    fields.forEach((field) => {
+      item[field] = source?.[`${prefix}_${i}_${field}`] ?? '';
+    });
+    items.push(item);
+  }
+  return items;
+};
+
+const parseSequentialList = (source, keysBuilder, max = 12) => {
+  const items = [];
+  for (let i = 1; i <= max; i += 1) {
+    const candidate = keysBuilder(i);
+    const hasAny = Object.values(candidate).some((value) => String(value || '').trim().length > 0);
+    if (hasAny) items.push(candidate);
+  }
+  return items;
+};
+
+const hasNonEmptyArray = (value) => Array.isArray(value) && value.length > 0;
+
+const normalizePortfolioToFormData = (payload) => {
+  const portfolio = payload?.portfolio || payload || {};
+  const fromRaw = parsePossibleJson(portfolio.rawFormData);
+  const fromPlaceholders = parsePossibleJson(portfolio.placeholderMap) || {};
+  const source = { ...(fromPlaceholders || {}), ...(fromRaw || {}) };
+
+  const flatExperience = parseCountedList(source, 'exp', ['company', 'role', 'duration', 'description', 'highlight'], 'exp_count')
+    .map((item) => ({
+      company: item.company || '',
+      role: item.role || '',
+      duration: item.duration || '',
+      description: item.description || item.highlight || '',
+    }))
+    .filter((item) => item.company || item.role || item.duration || item.description);
+
+  const flatProjects = parseCountedList(source, 'project', ['name', 'description', 'tech', 'tagline', 'live_url', 'github_url'], 'project_count')
+    .map((item) => ({
+      title: item.name || '',
+      description: item.description || item.tagline || '',
+      technologies: splitCsv(item.tech),
+      projectUrl: item.live_url || item.github_url || '',
+    }))
+    .filter((item) => item.title || item.description || item.technologies.length > 0 || item.projectUrl);
+
+  const flatEducation = parseCountedList(source, 'edu', ['degree', 'institution', 'year', 'grade'], 'edu_count')
+    .map((item) => ({
+      school: item.institution || '',
+      degree: item.degree || '',
+      duration: item.year || '',
+      description: item.grade ? `Grade: ${item.grade}` : '',
+    }))
+    .filter((item) => item.school || item.degree || item.duration || item.description);
+
+  const altEducation = parseSequentialList(source, (i) => ({
+    school: source?.[`education_${i}_institution`] || source?.[`education_${i}_school`] || source?.[`education_${i}_university`] || '',
+    degree: source?.[`education_${i}_degree`] || '',
+    duration: source?.[`education_${i}_year`] || source?.[`education_${i}_graduation_year`] || '',
+    description: source?.[`education_${i}_grade`] || source?.[`education_${i}_gpa`] || '',
+  })).map((item) => ({
+    ...item,
+    description: item.description ? `Grade: ${item.description}` : '',
+  }));
+
+  const flatTestimonials = parseCountedList(source, 'testimonial', ['author', 'role', 'content'], 'testimonial_count')
+    .map((item) => ({
+      name: item.author || '',
+      role: item.role || '',
+      company: '',
+      text: item.content || '',
+    }))
+    .filter((item) => item.name || item.role || item.text);
+
+  const altTestimonials = parseSequentialList(source, (i) => ({
+    name: source?.[`testimonial_${i}_name`] || source?.[`testimonial_${i}_author`] || '',
+    role: source?.[`testimonial_${i}_role`] || '',
+    company: source?.[`testimonial_${i}_company`] || '',
+    text: source?.[`testimonial_${i}_text`] || source?.[`testimonial_${i}_content`] || '',
+  }));
+
+  const fallbackEducation = hasNonEmptyArray(flatEducation) ? flatEducation : altEducation;
+  const fallbackTestimonials = hasNonEmptyArray(flatTestimonials) ? flatTestimonials : altTestimonials;
+
+  const skills = Array.isArray(source.skills)
+    ? source.skills.map((s) => (typeof s === 'string' ? s : (s?.name || s?.title || '')).trim()).filter(Boolean)
+    : splitCsv(source.skills_list || source.skills || source.primary_skills || source.tech_stack);
+
+  const normalizeProject = (project) => ({
+        title: project?.title || project?.name || '',
+        description: project?.description || project?.summary || '',
+        technologies: splitCsv(project?.technologies || project?.tech),
+        projectUrl: project?.projectUrl || project?.live_url || project?.url || project?.github_url || '',
+      });
+  const normalizeEducation = (edu) => ({
+    school: edu?.school || edu?.institution || edu?.university || '',
+    degree: edu?.degree || '',
+    duration: edu?.duration || edu?.year || edu?.graduation_year || '',
+    description: edu?.description || (edu?.grade || edu?.gpa ? `Grade: ${edu?.grade || edu?.gpa}` : ''),
+  });
+  const normalizeTestimonial = (testimonial) => ({
+    name: testimonial?.name || testimonial?.author || '',
+    role: testimonial?.role || '',
+    company: testimonial?.company || '',
+    text: testimonial?.text || testimonial?.content || '',
+  });
+
+  const experience = hasNonEmptyArray(fromRaw?.experience)
+    ? fromRaw.experience
+    : hasNonEmptyArray(fromPlaceholders?.experience)
+      ? fromPlaceholders.experience
+      : flatExperience;
+  const projects = hasNonEmptyArray(fromRaw?.projects)
+    ? fromRaw.projects.map(normalizeProject)
+    : hasNonEmptyArray(fromPlaceholders?.projects)
+      ? fromPlaceholders.projects.map(normalizeProject)
+      : flatProjects;
+  const education = hasNonEmptyArray(fromRaw?.education)
+    ? fromRaw.education.map(normalizeEducation)
+    : hasNonEmptyArray(fromPlaceholders?.education)
+      ? fromPlaceholders.education.map(normalizeEducation)
+      : fallbackEducation;
+  const testimonials = hasNonEmptyArray(fromRaw?.testimonials)
+    ? fromRaw.testimonials.map(normalizeTestimonial)
+    : hasNonEmptyArray(fromPlaceholders?.testimonials)
+      ? fromPlaceholders.testimonials.map(normalizeTestimonial)
+      : fallbackTestimonials;
+
+  return {
+    name: source.name || source.fullName || source.personalInfo?.name || '',
+    title: source.title || source.headline || source.personalInfo?.title || '',
+    about: source.about || source.bio || source.personalInfo?.about || '',
+    skills,
+    experience,
+    projects,
+    education,
+    testimonials,
+    blogs: Array.isArray(source.blogs) ? source.blogs : [],
+    contact: {
+      email: source.contact?.email || source.email || source.contact_email || '',
+      linkedin: source.contact?.linkedin || source.linkedin || source.contact_linkedin || '',
+      github: source.contact?.github || source.github || source.contact_github || '',
+      twitter: source.contact?.twitter || source.twitter || source.contact_twitter || '',
+    },
+  };
+};
+
 const EditContent = ({ dark = false, portfolioId = null }) => {
   const dispatch = useDispatch();
   const { formData } = useSelector((state) => state.portfolio);
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState('personal');
+  const [saveNotice, setSaveNotice] = useState({ type: '', message: '' });
 
   // Theme tokens
   const t1      = dark ? 'text-white'      : 'text-gray-900';
@@ -174,7 +372,56 @@ const EditContent = ({ dark = false, portfolioId = null }) => {
   const cardFormCls = cn('p-6 rounded-lg border mb-8', dark ? 'bg-[#1a2640] border-slate-700/60' : 'bg-gray-50 border-gray-200');
   const saveBtnCls  = cn('px-8 py-3 rounded-lg font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed text-white',
     dark ? 'bg-violet-600 hover:bg-violet-500' : 'bg-gray-900 hover:opacity-90');
-  const [isLoading, setIsLoading] = useState(false);
+
+  const { control, reset, handleSubmit } = useForm({
+    resolver: zodResolver(editContentSchema),
+    defaultValues: formData,
+  });
+
+  useFieldArray({ control, name: 'skills' });
+  useFieldArray({ control, name: 'experience' });
+  useFieldArray({ control, name: 'projects' });
+  useFieldArray({ control, name: 'education' });
+  useFieldArray({ control, name: 'testimonials' });
+
+  useEffect(() => {
+    reset(formData);
+  }, [formData, reset]);
+
+  const {
+    data: existingPortfolioData,
+    isLoading: isFormDataLoading,
+    isError: isFormDataError,
+    error: formDataError,
+    refetch: refetchFormData,
+  } = useQuery({
+    queryKey: ['edit-portfolio', portfolioId || 'me'],
+    queryFn: () => PortfolioService.getMyPortfolio(),
+  });
+
+  const effectivePortfolioId = portfolioId || existingPortfolioData?.portfolio?.id || existingPortfolioData?.id || null;
+
+  useEffect(() => {
+    if (!existingPortfolioData) return;
+    const normalized = normalizePortfolioToFormData(existingPortfolioData);
+    dispatch(updateFormData(normalized));
+    reset(normalized);
+  }, [existingPortfolioData, dispatch, reset]);
+
+  const saveMutation = useMutation({
+    mutationFn: (payload) => PortfolioService.update(effectivePortfolioId, { formData: payload }),
+    onSuccess: async () => {
+      setSaveNotice({ type: 'success', message: 'Changes saved' });
+      await queryClient.invalidateQueries({ queryKey: ['edit-portfolio', effectivePortfolioId || 'me'] });
+      if (effectivePortfolioId) {
+        await queryClient.invalidateQueries({ queryKey: ['dashboard-portfolio', effectivePortfolioId] });
+      }
+    },
+    onError: (err) => {
+      const specific = err?.response?.data?.message || err?.message || 'Connection failed, please try again';
+      setSaveNotice({ type: 'error', message: `Failed to save - ${specific}` });
+    },
+  });
 
   // Skills
   const [currentSkill, setCurrentSkill] = useState('');
@@ -213,13 +460,13 @@ const EditContent = ({ dark = false, portfolioId = null }) => {
   const [newTestimonial, setNewTestimonial] = useState({ name:'', role:'', company:'', text:'' });
 
   const tabs = [
-    { id:'personal', label:'Personal Info', icon:<Person2OutlinedIcon style={{ fontSize: 20 }} /> },
-    { id:'skills', label:'Skills', icon:<PsychologyOutlinedIcon style={{ fontSize: 20 }} />},
-    { id:'experience', label:'Experience', icon:<AddHomeWorkOutlinedIcon style={{ fontSize: 20 }} /> },
-    { id:'projects', label:'Projects', icon:<RocketLaunchOutlinedIcon style={{ fontSize: 20 }} /> },
-    { id:'education', label:'Education', icon:<SchoolOutlinedIcon style={{ fontSize: 20 }} /> },
-    { id:'testimonials', label:'Testimonials', icon:<ChatOutlinedIcon style={{ fontSize: 20 }} /> },
-    { id:'contact', label:'Contact', icon:<EmailOutlinedIcon style={{ fontSize: 20 }} /> },
+    { id:'personal', label:'Personal Info', icon:<MdPerson style={{ fontSize: 20 }} /> },
+    { id:'skills', label:'Skills', icon:<MdOutlinePsychology style={{ fontSize: 20 }} />},
+    { id:'experience', label:'Experience', icon:<BiBriefcase style={{ fontSize: 20 }} /> },
+    { id:'projects', label:'Projects', icon:<MdOutlineAirplanemodeActive style={{ fontSize: 20 }} /> },
+    { id:'education', label:'Education', icon:<MdSchool style={{ fontSize: 20 }} /> },
+    { id:'testimonials', label:'Testimonials', icon:<BiMessageRoundedDots style={{ fontSize: 20 }} /> },
+    { id:'contact', label:'Contact', icon:<MdEmail style={{ fontSize: 20 }} /> },
   ];
 
   const formatDate = (date) => {
@@ -710,21 +957,51 @@ const EditContent = ({ dark = false, portfolioId = null }) => {
     }
   };
 
-  const handleSaveChanges = async () => {
-    if (!portfolioId) {
-      alert('Portfolio not found. Please generate your portfolio first.');
+  const onValidSubmit = () => {
+    if (!effectivePortfolioId) {
+      setSaveNotice({ type: 'error', message: 'Portfolio not found. Please generate your portfolio first.' });
       return;
     }
-    setIsLoading(true);
-    try {
-      await PortfolioService.update(portfolioId, { formData });
-      alert('Data saved successfully! Your website has been updated.');
-    } catch (err) {
-      alert(err.message || 'Failed to save changes');
-    } finally {
-      setIsLoading(false);
-    }
+    setSaveNotice({ type: '', message: '' });
+    // Inputs are controlled through Redux state, so persist the Redux snapshot.
+    const sanitizedPayload = JSON.parse(JSON.stringify(formData || {}));
+    saveMutation.mutate(sanitizedPayload);
   };
+
+  const onInvalidSubmit = () => {
+    setSaveNotice({ type: 'error', message: 'Failed to save - please fix validation errors and try again.' });
+  };
+
+  const handleSaveChanges = handleSubmit(onValidSubmit, onInvalidSubmit);
+
+  if (isFormDataLoading) {
+    return (
+      <div className="space-y-6">
+        <div className={cn('p-6 rounded-2xl border animate-pulse', dark ? 'bg-[#0f1829] border-slate-700/60' : 'bg-gray-50 border-gray-200')}>
+          <div className={cn('h-6 w-56 rounded mb-3', dark ? 'bg-slate-700' : 'bg-gray-200')} />
+          <div className={cn('h-4 w-96 rounded', dark ? 'bg-slate-700/70' : 'bg-gray-200/80')} />
+        </div>
+        <div className={cn('rounded-2xl border p-6 space-y-4 animate-pulse', dark ? 'bg-[#0f1829] border-slate-700/60' : 'bg-white border-gray-200')}>
+          <div className={cn('h-4 w-32 rounded', dark ? 'bg-slate-700' : 'bg-gray-200')} />
+          <div className={cn('h-10 w-full rounded', dark ? 'bg-slate-700/70' : 'bg-gray-200/80')} />
+          <div className={cn('h-10 w-full rounded', dark ? 'bg-slate-700/70' : 'bg-gray-200/80')} />
+          <div className={cn('h-24 w-full rounded', dark ? 'bg-slate-700/70' : 'bg-gray-200/80')} />
+        </div>
+      </div>
+    );
+  }
+
+  if (isFormDataError) {
+    const msg = formDataError?.response?.data?.message || formDataError?.message || 'Failed to load existing data';
+    return (
+      <div className={cn('rounded-2xl border p-6', dark ? 'bg-[#0f1829] border-rose-700/50' : 'bg-rose-50 border-rose-200')}>
+        <p className={cn('text-sm mb-4', dark ? 'text-rose-300' : 'text-rose-700')}>{msg}</p>
+        <button onClick={() => refetchFormData()} className={cn('px-4 py-2 rounded-lg text-sm font-semibold', dark ? 'bg-rose-600 text-white' : 'bg-rose-600 text-white')}>
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -750,9 +1027,18 @@ const EditContent = ({ dark = false, portfolioId = null }) => {
           {renderTabContent()}
         </div>
       </div>
+      {saveNotice.message && (
+        <div className={cn(
+          'rounded-xl border px-4 py-3 text-sm',
+          saveNotice.type === 'success' && (dark ? 'bg-emerald-900/20 border-emerald-700/40 text-emerald-300' : 'bg-emerald-50 border-emerald-200 text-emerald-700'),
+          saveNotice.type === 'error' && (dark ? 'bg-rose-900/20 border-rose-700/40 text-rose-300' : 'bg-rose-50 border-rose-200 text-rose-700')
+        )}>
+          {saveNotice.message}
+        </div>
+      )}
       <div className="flex justify-end">
-        <button onClick={handleSaveChanges} disabled={isLoading} className={saveBtnCls}>
-          {isLoading ? 'Saving...' : 'Save Changes'}
+        <button onClick={handleSaveChanges} disabled={saveMutation.isPending} className={saveBtnCls}>
+          {saveMutation.isPending ? 'Saving...' : 'Save Changes'}
         </button>
       </div>
       <div className={cn('border rounded-xl p-4', dark ? 'bg-violet-900/20 border-violet-700/40' : 'bg-blue-50/50 border-blue-200/60')}>

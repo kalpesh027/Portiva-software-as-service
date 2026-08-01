@@ -205,6 +205,58 @@ public class UserService {
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
     }
 
+    /**
+     * Promote user to admin — development/setup only.
+     * No permission checks; caller must validate separately.
+     */
+    @Transactional
+    public User promoteToAdmin(String email) {
+        User user = userRepository.findByEmailAndDeletedAtIsNull(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + email));
+        
+        user.setRole("admin");
+        user = userRepository.save(user);
+        log.info("User promoted to admin: email={} userId={}", email, user.getId());
+        return user;
+    }
+
+    /**
+     * Create admin user directly — development/setup only.
+     * Skips OTP verification. Sets email_verified=true, role=admin.
+     * Returns {token, user} ready for immediate login.
+     */
+    @Transactional
+    public AuthResponse createAdminUser(String email, String password, String name) {
+        if (userRepository.existsByEmail(email)) {
+            throw new ForbiddenException("An account with this email already exists");
+        }
+
+        User user = User.builder()
+                .name(name)
+                .email(email)
+                .passwordHash(passwordEncoder.encode(password))
+                .role("admin")
+                .emailVerified(true)
+                .isNewUser(true)
+                .aiGenCount(0)
+                .build();
+
+        user = userRepository.save(user);
+
+        // Create free subscription
+        Subscription subscription = Subscription.builder()
+                .user(user)
+                .plan("free")
+                .status("inactive")
+                .build();
+        subscriptionRepository.save(subscription);
+
+        String token = jwtUtil.generateToken(user.getId(), user.getRole());
+        log.info("Admin user created: email={} userId={}", email, user.getId());
+        
+        return buildAuthResponse(token, user);
+    }
+
     public AuthResponse buildAuthResponse(String token, User user) {
         Subscription sub = subscriptionRepository.findByUserId(user.getId())
                 .orElse(null);
@@ -217,6 +269,7 @@ public class UserService {
                 "id", user.getId().toString(),
                 "name", user.getName(),
                 "email", user.getEmail(),
+                "role", user.getRole(),
                 "title", user.getTitle() != null ? user.getTitle() : "",
                 "avatar", user.getAvatar() != null ? user.getAvatar() : "",
                 "subscription", subscriptionMap,
@@ -237,6 +290,7 @@ public class UserService {
                 .id(user.getId().toString())
                 .name(user.getName())
                 .email(user.getEmail())
+                .role(user.getRole())
                 .title(user.getTitle())
                 .avatar(user.getAvatar())
                 .location(user.getLocation())

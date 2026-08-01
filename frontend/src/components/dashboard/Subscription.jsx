@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { cn } from '../landing/landingUtils';
+import SubscriptionService from '../../services/subscriptionService';
 
 
 const Check = ({ cls = 'text-green-500' }) => (
@@ -118,10 +119,198 @@ const INVOICES = [
 // ── component ─────────────────────────────────────────────────────────────────
 const Subscription = ({ dark = false }) => {
     const [billing, setBilling]           = useState('monthly');
-    const [currentPlan]                   = useState('king');
-    const [subStatus]                     = useState('active');
+    const [currentPlan, setCurrentPlan]   = useState('king');
+    const [subStatus, setSubStatus]       = useState('active');
+    const [expiresAt, setExpiresAt]       = useState('');
+    const [apiPlans, setApiPlans]         = useState([]);
+    const [loading, setLoading]           = useState(false);
+    const [error, setError]               = useState('');
+    const [cancelLoading, setCancelLoading] = useState(false);
     const [showCancelModal, setShowCancelModal] = useState(false);
     const [showInvoices, setShowInvoices] = useState(false);
+    const [checkoutLoading, setCheckoutLoading] = useState(false);
+
+    useEffect(() => {
+        const loadSubscriptionData = async () => {
+            setLoading(true);
+            setError('');
+            try {
+                const [statusRes, plansRes] = await Promise.all([
+                    SubscriptionService.getStatus(),
+                    SubscriptionService.getPlans(),
+                ]);
+
+                if (statusRes?.status) setSubStatus(String(statusRes.status).toLowerCase());
+                if (statusRes?.plan) {
+                    const normalized = String(statusRes.plan).toLowerCase();
+                    const match = PLANS.find((p) => normalized.includes(p.id) || p.name.toLowerCase().includes(normalized));
+                    if (match?.id) setCurrentPlan(match.id);
+                }
+                if (statusRes?.expiresAt) setExpiresAt(statusRes.expiresAt);
+                setApiPlans(plansRes?.plans || []);
+            } catch (err) {
+                setError(err?.message || 'Failed to load subscription data. Showing defaults.');
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        loadSubscriptionData();
+    }, []);
+
+    // Load Razorpay SDK script
+    const loadRazorpayScript = () => {
+        return new Promise((resolve) => {
+            if (window.Razorpay) {
+                resolve(true);
+                return;
+            }
+            const script = document.createElement('script');
+            script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+            script.async = true;
+            script.onload = () => resolve(true);
+            script.onerror = () => resolve(false);
+            document.body.appendChild(script);
+        });
+    };
+
+    // Handle upgrade button click - initiate Razorpay checkout
+    const handleUpgrade = async (plan) => {
+        try {
+            setCheckoutLoading(true);
+            setError('');
+
+            // Load Razorpay script
+            const scriptLoaded = await loadRazorpayScript();
+            if (!scriptLoaded) {
+                setError('Failed to load payment gateway. Please try again.');
+                setCheckoutLoading(false);
+                return;
+            }
+
+            // Create order on backend
+            const orderResponse = await SubscriptionService.createOrder(plan.id, billing);
+            if (!orderResponse?.orderId) {
+                setError('Failed to create payment order. Please try again.');
+                setCheckoutLoading(false);
+                return;
+            }
+
+            const { orderId, amount, currency, keyId } = orderResponse;
+
+            // Open Razorpay checkout modal
+            const options = {
+                key: keyId,
+                amount: amount,
+                currency: currency || 'INR',
+                order_id: orderId,
+                description: `Subscribe to ${plan.name} plan`,
+                prefill: {
+                    name: 'User',
+                    email: 'user@example.com',
+                    contact: '',
+                },
+                handler: async (response) => {
+                    try {
+                        // Verify payment on backend
+                        const verifyResponse = await SubscriptionService.verifyPayment(
+                            orderId,
+                            response.razorpay_payment_id,
+                            response.razorpay_signature
+                        );
+
+                        if (verifyResponse?.success) {
+                            setSubStatus('active');
+                            setCurrentPlan(plan.id);
+                            setError('');
+                            // Reload subscription data
+                            const [statusRes, plansRes] = await Promise.all([
+                                SubscriptionService.getStatus(),
+                                SubscriptionService.getPlans(),
+                            ]);
+                            if (statusRes?.status) setSubStatus(String(statusRes.status).toLowerCase());
+                            if (statusRes?.plan) {
+                                const normalized = String(statusRes.plan).toLowerCase();
+                                const match = PLANS.find((p) => normalized.includes(p.id) || p.name.toLowerCase().includes(normalized));
+                                if (match?.id) setCurrentPlan(match.id);
+                            }
+                            if (statusRes?.expiresAt) setExpiresAt(statusRes.expiresAt);
+                            setApiPlans(plansRes?.plans || []);
+                        } else {
+                            setError('Payment verification failed. Please contact support.');
+                        }
+                    } catch (err) {
+                        setError(err?.message || 'Payment verification failed. Please try again.');
+                    } finally {
+                        setCheckoutLoading(false);
+                    }
+                },
+                modal: {
+                    ondismiss: () => {
+                        setCheckoutLoading(false);
+                    },
+                },
+                theme: {
+                    color: '#7c3aed',
+                },
+            };
+
+            // Open checkout
+            const razorpay = new window.Razorpay(options);
+            razorpay.open();
+        } catch (err) {
+            setError(err?.message || 'Failed to initiate payment. Please try again.');
+            setCheckoutLoading(false);
+        }
+    };
+
+    // Reload subscription data function
+    const loadSubscriptionData = async () => {
+        setLoading(true);
+        setError('');
+        try {
+            const [statusRes, plansRes] = await Promise.all([
+                SubscriptionService.getStatus(),
+                SubscriptionService.getPlans(),
+            ]);
+
+            if (statusRes?.status) setSubStatus(String(statusRes.status).toLowerCase());
+            if (statusRes?.plan) {
+                const normalized = String(statusRes.plan).toLowerCase();
+                const match = PLANS.find((p) => normalized.includes(p.id) || p.name.toLowerCase().includes(normalized));
+                if (match?.id) setCurrentPlan(match.id);
+            }
+            if (statusRes?.expiresAt) setExpiresAt(statusRes.expiresAt);
+            setApiPlans(plansRes?.plans || []);
+        } catch (err) {
+            setError(err?.message || 'Failed to load subscription data. Showing defaults.');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const dynamicPlans = useMemo(() => {
+        if (!apiPlans.length) return PLANS;
+
+        const byName = {
+            free: PLANS[0],
+            pro: PLANS[1],
+            team: PLANS[2],
+        };
+
+        const grouped = {};
+        for (const p of apiPlans) {
+            const base = String(p.id || '').split('_')[0];
+            if (!grouped[base]) grouped[base] = { ...byName[base] };
+            if (!grouped[base]) continue;
+            const amountInr = Number(p.price || 0) / 100;
+            if (p.billingPeriod === 'yearly') grouped[base].yearly = amountInr;
+            else grouped[base].monthly = amountInr;
+            grouped[base].name = p.name?.includes('(') ? grouped[base].name : (p.name || grouped[base].name);
+        }
+
+        return Object.values(grouped).length ? Object.values(grouped) : PLANS;
+    }, [apiPlans]);
 
     const t1     = dark ? 'text-white'     : 'text-slate-900';
     const t2     = dark ? 'text-slate-400' : 'text-slate-500';
@@ -151,8 +340,8 @@ const Subscription = ({ dark = false }) => {
 
     const planAction = (plan) => {
         if (plan.id === currentPlan) return null;
-        const currentIdx = PLANS.findIndex(p => p.id === currentPlan);
-        const targetIdx  = PLANS.findIndex(p => p.id === plan.id);
+        const currentIdx = dynamicPlans.findIndex(p => p.id === currentPlan);
+        const targetIdx  = dynamicPlans.findIndex(p => p.id === plan.id);
         return targetIdx > currentIdx ? 'Upgrade' : 'Downgrade';
     };
 
@@ -160,6 +349,12 @@ const Subscription = ({ dark = false }) => {
 
     return (
         <div className="space-y-8">
+
+            {error && (
+                <div className={cn('rounded-xl border px-4 py-3 text-sm', dark ? 'border-rose-500/40 bg-rose-500/10 text-rose-200' : 'border-rose-300 bg-rose-50 text-rose-700')}>
+                    {error}
+                </div>
+            )}
 
             {/* ── Page header ──────────────────────────────────────── */}
             <div className={cn('rounded-2xl border p-6', dark ? 'bg-[#0f1829] border-slate-700/60' : 'bg-gradient-to-r from-violet-50 to-slate-50 border-slate-200')}>
@@ -189,16 +384,16 @@ const Subscription = ({ dark = false }) => {
                     <div className="flex items-center gap-2">
                         <span className="text-xs font-bold text-amber-500 bg-amber-500/10 border border-amber-500/30 px-3 py-1 rounded-full flex items-center gap-1">
                             <svg className="w-3 h-3 fill-current" viewBox="0 0 24 24"><path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm14 3c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-1h14v1z"/></svg>
-                            Premium King
+                            {dynamicPlans.find((p) => p.id === currentPlan)?.name || 'Current Plan'}
                         </span>
                         <StatusBadge status={subStatus} />
                     </div>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                     {[
-                        { label: 'Plan Amount',    val: '$29.99 / mo',     icon: 'M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z' },
-                        { label: 'Billing Cycle',  val: 'Monthly',         icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z' },
-                        { label: 'Next Billing',   val: 'Apr 1, 2026',     icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
+                        { label: 'Plan Amount',    val: `$${(price(dynamicPlans.find((p) => p.id === currentPlan) || dynamicPlans[0]) || 0).toFixed(2)} / mo`,     icon: 'M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z' },
+                        { label: 'Billing Cycle',  val: billing === 'yearly' ? 'Yearly' : 'Monthly',         icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z' },
+                        { label: 'Next Billing',   val: expiresAt ? new Date(expiresAt).toLocaleDateString() : 'N/A',     icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
                         { label: 'Payment Method', val: 'Visa ···· 4242',  icon: 'M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z' },
                     ].map(({ label, val, icon }) => (
                         <div key={label} className={cn('rounded-xl p-4 border', bg2, border)}>
@@ -224,9 +419,10 @@ const Subscription = ({ dark = false }) => {
                     </button>
                     <button
                         onClick={() => setShowCancelModal(true)}
+                        disabled={cancelLoading || loading}
                         className="px-4 py-2 text-sm font-semibold text-red-500 border border-red-500/30 rounded-xl hover:bg-red-500/10 transition-all"
                     >
-                        Cancel Subscription
+                        {cancelLoading ? 'Cancelling...' : 'Cancel Subscription'}
                     </button>
                 </div>
             </div>
@@ -292,7 +488,7 @@ const Subscription = ({ dark = false }) => {
 
             {/* ── Plan cards ───────────────────────────────────────── */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                {PLANS.map(plan => {
+                {dynamicPlans.map(plan => {
                     const isCurrent = plan.id === currentPlan;
                     const colors    = planColorMap[plan.color];
                     const action    = planAction(plan);
@@ -353,8 +549,15 @@ const Subscription = ({ dark = false }) => {
                                     Current Plan
                                 </button>
                             ) : action ? (
-                                <button className={cn('w-full py-2.5 rounded-xl text-sm font-bold text-white transition-all hover:-translate-y-0.5 hover:shadow-lg', colors.btn)}>
-                                    {action} to {plan.name}
+                                <button 
+                                    onClick={() => handleUpgrade(plan)}
+                                    disabled={checkoutLoading || loading}
+                                    className={cn('w-full py-2.5 rounded-xl text-sm font-bold text-white transition-all', 
+                                        checkoutLoading || loading ? 'opacity-50 cursor-not-allowed' : 'hover:shadow-lg',
+                                        colors.btn
+                                    )}
+                                >
+                                    {checkoutLoading ? 'Processing...' : `${action} to ${plan.name}`}
                                 </button>
                             ) : (
                                 <button className={cn('w-full py-2.5 rounded-xl text-sm font-bold border transition-all', dark ? 'border-slate-700 text-slate-300 hover:border-violet-500' : 'border-slate-300 text-slate-700 hover:border-violet-400')}>
@@ -374,7 +577,7 @@ const Subscription = ({ dark = false }) => {
                         <thead>
                             <tr className={cn('border-b', border)}>
                                 <th className={cn('text-left px-4 py-3 font-semibold', t2)}>Feature</th>
-                                {PLANS.map(p => (
+                                {dynamicPlans.map(p => (
                                     <th key={p.id} className={cn('text-center px-4 py-3 font-bold',
                                         p.id === currentPlan ? (dark ? 'text-violet-400' : 'text-violet-700') : t1)}>
                                         {p.name}
@@ -387,7 +590,7 @@ const Subscription = ({ dark = false }) => {
                             {FEATURE_KEYS.map((key, i) => (
                                 <tr key={key} className={cn('border-b last:border-0 hover:bg-violet-500/5 transition-colors', border, i % 2 === 0 ? (dark ? 'bg-white/[0.01]' : 'bg-slate-50/50') : '')}>
                                     <td className={cn('px-4 py-3 font-medium', t3)}>{key}</td>
-                                    {PLANS.map(p => (
+                                    {dynamicPlans.map(p => (
                                         <td key={p.id} className="px-4 py-3 text-center">
                                             <div className="flex justify-center">
                                                 {featureVal(p.features[key])}
@@ -460,8 +663,23 @@ const Subscription = ({ dark = false }) => {
                             >
                                 Keep Plan
                             </button>
-                            <button className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-red-600 hover:bg-red-700 transition-all">
-                                Yes, Cancel
+                            <button
+                                disabled={cancelLoading}
+                                onClick={async () => {
+                                    try {
+                                        setCancelLoading(true);
+                                        await SubscriptionService.cancel();
+                                        setSubStatus('cancelled');
+                                        setShowCancelModal(false);
+                                    } catch (err) {
+                                        setError(err?.message || 'Failed to cancel subscription.');
+                                    } finally {
+                                        setCancelLoading(false);
+                                    }
+                                }}
+                                className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-red-600 hover:bg-red-700 transition-all"
+                            >
+                                {cancelLoading ? 'Cancelling...' : 'Yes, Cancel'}
                             </button>
                         </div>
                     </div>

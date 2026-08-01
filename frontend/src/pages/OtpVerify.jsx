@@ -1,24 +1,74 @@
 ﻿import { useState, useEffect, useRef } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
-import { useDispatch } from "react-redux";
-import { verifyOtpCode } from "../features/auth/authSlice";
-import AuthService from "../services/authService";
+import { useDispatch, useSelector } from "react-redux";
+import { clearAuthError, resendOtpCode, setOnboardingStatus, verifyOtpCode } from "../features/auth/authSlice";
 import { CiCloudRainbow } from "react-icons/ci";
 import { useStoredTheme } from "../hooks/useStoredTheme";
 import { cn } from "../utils/cn";
 import LoadingSpinner from "../components/common/LoadingSpinner";
+import PortfolioService from "../services/portfolioService";
+import { getPostLoginRoute } from "../utils/postLoginRoute";
+
+const coerceBoolean = (value) => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+  }
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+  }
+  return null;
+};
+
+const resolveProfileComplete = (verifiedUser, hasCompletedPortfolioFallback = false) => {
+  const explicitProfileComplete = coerceBoolean(
+    verifiedUser?.isProfileComplete ?? verifiedUser?.profileComplete ?? verifiedUser?.is_profile_complete
+  );
+  if (explicitProfileComplete !== null) return explicitProfileComplete;
+
+  const explicitIsNewUser = coerceBoolean(
+    verifiedUser?.isNewUser ?? verifiedUser?.is_new_user ?? verifiedUser?.newUser
+  );
+  if (explicitIsNewUser !== null) return !explicitIsNewUser;
+
+  // OTP verify is mostly the first login. If flags are missing, use portfolio state
+  // (completed/published implies profile complete; otherwise keep user in onboarding).
+  return hasCompletedPortfolioFallback;
+};
 
 export default function OtpVerify() {
   const dark = useStoredTheme();
   const nav = useNavigate();
   const location = useLocation();
   const dispatch = useDispatch();
-  const email = location.state?.email;
+  const { loading, error, user } = useSelector((state) => state.auth);
+  const email = location.state?.email || user?.email || "";
+  const normalizedEmail = email.trim().toLowerCase();
+  const fromRegisterState = location.state?.fromRegister === true;
+  const fromRegisterSession =
+    sessionStorage.getItem("portiva-auth-origin") === "register"
+    && sessionStorage.getItem("portiva-auth-email") === normalizedEmail;
+  const fromRegisterFlow = fromRegisterState || fromRegisterSession;
   const inputRefs = useRef([]);
 
   const [otp,   setOtp]   = useState(["", "", "", "", "", ""]);
   const [timer, setTimer] = useState(60);
   const [done,  setDone]  = useState(false);
+  const [resendDone, setResendDone] = useState(false);
+  const [attempts, setAttempts] = useState(0);
+
+  const errorMessage = typeof error === "string" ? error : error?.message;
+  const errorStatus = typeof error === "object" ? error?.status : null;
+  const isExpired = errorStatus === 410;
+  const isLocked = errorStatus === 429 || attempts >= 5;
+
+  const clearRegisterFlowState = () => {
+    sessionStorage.removeItem("portiva-auth-origin");
+    sessionStorage.removeItem("portiva-auth-email");
+  };
 
   useEffect(() => {
     if (timer > 0) {
@@ -26,6 +76,48 @@ export default function OtpVerify() {
       return () => clearInterval(id);
     }
   }, [timer]);
+
+  const redirectAfterVerification = async (verifiedUser) => {
+    let onboardingStep = 1;
+    let hasCompletedPortfolio = false;
+
+    try {
+      const draft = await PortfolioService.getMyPortfolio();
+      const portfolio = draft?.portfolio || draft;
+      onboardingStep = portfolio?.currentStep || 1;
+      hasCompletedPortfolio = onboardingStep >= 7 || !!portfolio?.liveUrl || !!portfolio?.slug;
+    } catch (_) {
+      onboardingStep = 1;
+    }
+
+    if (fromRegisterFlow && !hasCompletedPortfolio) {
+      dispatch(setOnboardingStatus({ isProfileComplete: false, onboardingStep }));
+      clearRegisterFlowState();
+      setTimeout(() => nav("/onboarding"), 800);
+      return;
+    }
+
+    const isProfileComplete = resolveProfileComplete(verifiedUser, hasCompletedPortfolio);
+    const route = getPostLoginRoute({ isProfileComplete, role: verifiedUser?.role });
+
+    if (route === "/admin") {
+      dispatch(setOnboardingStatus({ isProfileComplete: true, onboardingStep: 7 }));
+      clearRegisterFlowState();
+      setTimeout(() => nav("/admin"), 800);
+      return;
+    }
+
+    if (route === "/onboarding") {
+      dispatch(setOnboardingStatus({ isProfileComplete: false, onboardingStep }));
+      clearRegisterFlowState();
+      setTimeout(() => nav("/onboarding"), 800);
+      return;
+    }
+
+    dispatch(setOnboardingStatus({ isProfileComplete: true, onboardingStep: 7 }));
+    clearRegisterFlowState();
+    setTimeout(() => nav("/dashboard"), 800);
+  };
 
   const handleChange = (el, index) => {
     if (isNaN(el.value)) return;
@@ -52,33 +144,38 @@ export default function OtpVerify() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (isLocked || isExpired) return;
+    dispatch(clearAuthError());
+    setResendDone(false);
     const code = otp.join("");
     if (code.length === 6) {
       if (!email) {
-        alert("Session expired, please register again.");
+        dispatch(clearAuthError());
+        clearRegisterFlowState();
         return nav("/register");
       }
       try {
-        await dispatch(verifyOtpCode({ email, otp: code })).unwrap();
+        const verifiedUser = await dispatch(verifyOtpCode({ email, otp: code })).unwrap();
         setDone(true);
-        setTimeout(() => nav("/create"), 800);
-      } catch (err) {
-        alert("Invalid or expired OTP");
+        await redirectAfterVerification(verifiedUser);
+      } catch (_) {
         setOtp(["", "", "", "", "", ""]);
+        setAttempts((prev) => prev + 1);
       }
     }
   };
 
   const handleResend = async () => {
-    if (timer === 0 && email) {
+    if (timer === 0 && email && !loading) {
+      dispatch(clearAuthError());
       try {
-        await AuthService.resendOtp({ email });
+        await dispatch(resendOtpCode({ email })).unwrap();
         setOtp(["", "", "", "", "", ""]);
         setTimer(60);
+        setResendDone(true);
+        setAttempts(0);
         inputRefs.current[0]?.focus();
-      } catch (err) {
-        alert("Failed to resend OTP");
-      }
+      } catch (_) {}
     }
   };
 
@@ -112,6 +209,37 @@ export default function OtpVerify() {
       </p>
 
       <form onSubmit={handleSubmit} className="w-full max-w-sm">
+
+        {errorMessage && (
+          <div
+            role="alert"
+            className={cn(
+              "mb-4 rounded-xl border px-3 py-2 text-sm",
+              dark
+                ? "border-rose-500/40 bg-rose-500/10 text-rose-200"
+                : "border-rose-300 bg-rose-50 text-rose-700"
+            )}
+          >
+            {isLocked
+              ? "Too many failed attempts. Please wait and request a new OTP."
+              : isExpired
+                ? "This OTP has expired. Please request a new code."
+                : errorMessage}
+          </div>
+        )}
+
+        {resendDone && !error && (
+          <div
+            className={cn(
+              "mb-4 rounded-xl border px-3 py-2 text-sm",
+              dark
+                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                : "border-emerald-300 bg-emerald-50 text-emerald-700"
+            )}
+          >
+            OTP resent successfully.
+          </div>
+        )}
 
         {/* OTP input boxes */}
         <div className="flex gap-3 justify-center mb-3">
@@ -159,8 +287,9 @@ export default function OtpVerify() {
             <p className={cn("text-sm", dark ? "text-slate-400" : "text-slate-500")}>
               Didn't receive the code?{" "}
               <button type="button" onClick={handleResend}
+                disabled={loading}
                 className="text-violet-500 hover:text-violet-400 font-semibold transition-colors underline">
-                Resend
+                {loading ? 'Resending...' : 'Resend'}
               </button>
             </p>
           )}
@@ -169,18 +298,23 @@ export default function OtpVerify() {
         {/* Submit */}
         <button
           type="submit"
-          disabled={!allFilled || done}
+          disabled={!allFilled || done || loading || isLocked || isExpired}
           className={cn(
             "w-full py-3.5 rounded-xl font-bold text-sm text-white transition-all",
             "bg-gradient-to-r from-violet-600 to-violet-400 shadow-lg shadow-violet-500/25",
             "hover:shadow-violet-500/40 hover:-translate-y-0.5",
-            (!allFilled || done) ? "opacity-50 cursor-not-allowed" : ""
+            (!allFilled || done || loading) ? "opacity-50 cursor-not-allowed" : ""
           )}
         >
           {done ? (
             <span className="flex items-center justify-center gap-2">
               <LoadingSpinner size={16} />
               Verified! Redirecting…
+            </span>
+          ) : loading ? (
+            <span className="flex items-center justify-center gap-2">
+              <LoadingSpinner size={16} />
+              Verifying...
             </span>
           ) : "Verify & Continue"}
         </button>

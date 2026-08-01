@@ -53,6 +53,21 @@ public class AdminController {
         return ResponseEntity.ok(Map.of("message", "User deleted successfully"));
     }
 
+    /** POST /admin/users/{id}/password — reset user password */
+    @PostMapping("/users/{id}/password")
+    public ResponseEntity<Map<String, String>> resetUserPassword(
+            @AuthenticationPrincipal UUID adminId,
+            @PathVariable UUID id,
+            @RequestBody Map<String, String> payload
+    ) {
+        String newPassword = payload.get("newPassword");
+        if (newPassword == null || newPassword.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("message", "newPassword is required"));
+        }
+        adminService.resetUserPassword(adminId, id, newPassword);
+        return ResponseEntity.ok(Map.of("message", "Password reset successfully"));
+    }
+
     /** GET /admin/portfolios?page=0&size=20 */
     @GetMapping("/portfolios")
     public ResponseEntity<Page<PortfolioRow>> getPortfolios(
@@ -60,6 +75,18 @@ public class AdminController {
             @RequestParam(defaultValue = "20") int size
     ) {
         return ResponseEntity.ok(adminService.getPortfolios(page, size));
+    }
+
+    /** GET /admin/payments?page=0&size=20&status=&plan=&search= */
+    @GetMapping("/payments")
+    public ResponseEntity<Page<PaymentRow>> getPayments(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String plan,
+            @RequestParam(required = false) String search
+    ) {
+        return ResponseEntity.ok(adminService.getPayments(page, size, status, plan, search));
     }
 
     /** GET /admin/stats */

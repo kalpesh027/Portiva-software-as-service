@@ -1,6 +1,6 @@
 import { cn, T, Icon, I, FadeUp, Tilt, GradText } from "./landingUtils";
 import { IoShareSocial } from "react-icons/io5";
-import AlternateEmailRoundedIcon from '@mui/icons-material/AlternateEmailRounded';
+import { MdEmail } from "react-icons/md";
 
 export default function FeaturesGrid({ dark }) {
   const t = T(dark);
@@ -45,7 +45,7 @@ export default function FeaturesGrid({ dark }) {
                   {f.icon === "io-share-social"
                     ? <IoShareSocial size={20} />
                     : f.icon === "alternate-email-rounded"
-                      ? <AlternateEmailRoundedIcon style={{ fontSize: 24 }} />
+                      ? <MdEmail style={{ fontSize: 24 }} />
                       : <Icon d={f.icon} size={20} />}
                 </div>
                 <h3 className={cn("text-base font-black mb-2", t.textPrimary)}>{f.title}</h3>

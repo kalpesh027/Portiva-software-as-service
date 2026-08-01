@@ -1,13 +1,15 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useDispatch } from "react-redux";
-import { loginUser } from "../features/auth/authSlice";
+import { useDispatch, useSelector } from "react-redux";
+import { clearAuthError, loginUser, setOnboardingStatus } from "../features/auth/authSlice";
 import { CiCloudRainbow } from "react-icons/ci";
 import { useStoredTheme } from "../hooks/useStoredTheme";
 import { cn } from "../utils/cn";
 import { I } from "../utils/icons";
 import Icon from "../components/common/Icon";
 import LoadingSpinner from "../components/common/LoadingSpinner";
+import PortfolioService from "../services/portfolioService";
+import { getPostLoginRoute } from "../utils/postLoginRoute";
 
 const FEATURES = [
   { icon: "M13 10V3L4 14h7v7l9-11h-7z",                    title: "AI builds your portfolio",   desc: "Paste your experience — AI writes your bio, project descriptions and skills instantly." },
@@ -21,23 +23,70 @@ export default function Login() {
   const dark = useStoredTheme();
   const nav = useNavigate();
   const dispatch = useDispatch();
+  const { loading, error } = useSelector((state) => state.auth);
 
   const [email,    setEmail]    = useState("");
   const [password, setPassword] = useState("");
   const [showPw,   setShowPw]   = useState(false);
   const [remember, setRemember] = useState(false);
-  const [loading,  setLoading]  = useState(false);
+  const errorMessage = typeof error === "string" ? error : error?.message;
 
   const onSubmit = async (e) => {
     e.preventDefault();
-    setLoading(true);
+    dispatch(clearAuthError());
     try {
-      await dispatch(loginUser({ email, password })).unwrap();
+      const user = await dispatch(loginUser({ email, password })).unwrap();
+      const isEmailVerified =
+        typeof user?.isEmailVerified === "boolean"
+          ? user.isEmailVerified
+          : user?.emailVerified !== false;
+
+      if (!isEmailVerified) {
+        nav("/verify-otp", { state: { email: user?.email || email } });
+        return;
+      }
+
+      const isProfileComplete =
+        typeof user?.isProfileComplete === "boolean"
+          ? user.isProfileComplete
+          : typeof user?.isNewUser === "boolean"
+            ? !user.isNewUser
+            : true;
+
+      const route = getPostLoginRoute({ isProfileComplete, role: user?.role });
+
+      if (route === "/admin") {
+        dispatch(setOnboardingStatus({ isProfileComplete: true, onboardingStep: 7 }));
+        nav("/admin");
+        return;
+      }
+
+      if (route === "/onboarding") {
+        let onboardingStep = 1;
+        let hasCompletedPortfolio = false;
+        try {
+          const draft = await PortfolioService.getMyPortfolio();
+          const portfolio = draft?.portfolio || draft;
+          onboardingStep = portfolio?.currentStep || 1;
+          hasCompletedPortfolio = onboardingStep >= 7 || !!portfolio?.liveUrl || !!portfolio?.slug;
+        } catch (_) {
+          onboardingStep = 1;
+        }
+
+        if (hasCompletedPortfolio) {
+          dispatch(setOnboardingStatus({ isProfileComplete: true, onboardingStep: 7 }));
+          nav("/dashboard");
+          return;
+        }
+
+        dispatch(setOnboardingStatus({ isProfileComplete: false, onboardingStep }));
+        nav("/onboarding");
+        return;
+      }
+
+      dispatch(setOnboardingStatus({ isProfileComplete: true, onboardingStep: 7 }));
       nav("/dashboard");
-    } catch (err) {
-      alert(err.message || "Invalid credentials");
-      setLoading(false);
-    }
+    } catch (_) {}
   };
 
   return (
@@ -120,6 +169,20 @@ export default function Login() {
             </p>
 
             <form onSubmit={onSubmit} className="space-y-5">
+
+              {errorMessage && (
+                <div
+                  role="alert"
+                  className={cn(
+                    "rounded-xl border px-3 py-2 text-sm",
+                    dark
+                      ? "border-rose-500/40 bg-rose-500/10 text-rose-200"
+                      : "border-rose-300 bg-rose-50 text-rose-700"
+                  )}
+                >
+                  {errorMessage}
+                </div>
+              )}
 
               {/* Email */}
               <div>

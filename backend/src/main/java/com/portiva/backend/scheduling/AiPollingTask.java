@@ -87,12 +87,12 @@ public class AiPollingTask {
                         portfolio.setAiStatus("generating");
                         portfolioRepository.save(portfolio);
                     }
-                } else if ("failed".equals(aiStatus)) {
+                } else if ("failed".equals(aiStatus) || "error".equals(aiStatus)) {
                     portfolio.setAiStatus("failed");
                     portfolio.setStatus("failed");
                     portfolioRepository.save(portfolio);
-                    log.warn("AI generation failed: portfolioId={} userId={}",
-                            portfolio.getId(), userId);
+                    log.warn("AI generation failed: portfolioId={} userId={} aiStatus={}",
+                            portfolio.getId(), userId, aiStatus);
                 }
 
             } catch (Exception e) {
